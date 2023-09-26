@@ -165,7 +165,10 @@ use crate::{
     instance::{Adapter, HalSurface, Instance, Surface},
     pipeline::{ComputePipeline, RenderPipeline, ShaderModule},
     registry::Registry,
-    resource::{Buffer, QuerySet, Sampler, StagingBuffer, Texture, TextureClearMode, TextureView},
+    resource::{
+        Blas, Buffer, QuerySet, Sampler, StagingBuffer, Texture, TextureClearMode, TextureView,
+        Tlas,
+    },
     storage::{Element, Storage, StorageReport},
 };
 
@@ -280,6 +283,24 @@ impl<A: HalApi> Access<QuerySet<A>> for CommandBuffer<A> {}
 impl<A: HalApi> Access<QuerySet<A>> for RenderPipeline<A> {}
 impl<A: HalApi> Access<QuerySet<A>> for ComputePipeline<A> {}
 impl<A: HalApi> Access<QuerySet<A>> for Sampler<A> {}
+
+impl<A: HalApi> Access<Blas<A>> for Root {}
+impl<A: HalApi> Access<Blas<A>> for Device<A> {}
+impl<A: HalApi> Access<Blas<A>> for CommandBuffer<A> {}
+impl<A: HalApi> Access<Blas<A>> for Buffer<A> {}
+impl<A: HalApi> Access<Blas<A>> for Sampler<A> {}
+impl<A: HalApi> Access<Blas<A>> for QuerySet<A> {}
+impl<A: HalApi> Access<Blas<A>> for Texture<A> {}
+impl<A: HalApi> Access<Blas<A>> for TextureView<A> {}
+impl<A: HalApi> Access<Tlas<A>> for Root {}
+impl<A: HalApi> Access<Tlas<A>> for Device<A> {}
+impl<A: HalApi> Access<Tlas<A>> for CommandBuffer<A> {}
+impl<A: HalApi> Access<Tlas<A>> for Buffer<A> {}
+impl<A: HalApi> Access<Tlas<A>> for Blas<A> {}
+impl<A: HalApi> Access<Tlas<A>> for Sampler<A> {}
+impl<A: HalApi> Access<Tlas<A>> for QuerySet<A> {}
+impl<A: HalApi> Access<Tlas<A>> for Texture<A> {}
+impl<A: HalApi> Access<Tlas<A>> for TextureView<A> {}
 
 #[cfg(debug_assertions)]
 thread_local! {
@@ -463,6 +484,8 @@ pub struct Hub<A: HalApi, F: GlobalIdentityHandlerFactory> {
     pub textures: Registry<Texture<A>, id::TextureId, F>,
     pub texture_views: Registry<TextureView<A>, id::TextureViewId, F>,
     pub samplers: Registry<Sampler<A>, id::SamplerId, F>,
+    pub blas_s: Registry<Blas<A>, id::BlasId, F>,
+    pub tlas_s: Registry<Tlas<A>, id::TlasId, F>,
 }
 
 impl<A: HalApi, F: GlobalIdentityHandlerFactory> Hub<A, F> {
@@ -484,6 +507,8 @@ impl<A: HalApi, F: GlobalIdentityHandlerFactory> Hub<A, F> {
             textures: Registry::new(A::VARIANT, factory),
             texture_views: Registry::new(A::VARIANT, factory),
             samplers: Registry::new(A::VARIANT, factory),
+            blas_s: Registry::new(A::VARIANT, factory),
+            tlas_s: Registry::new(A::VARIANT, factory),
         }
     }
 
@@ -601,6 +626,33 @@ impl<A: HalApi, F: GlobalIdentityHandlerFactory> Hub<A, F> {
                 let device = &devices[pipeline.device_id.value];
                 unsafe {
                     device.raw.destroy_render_pipeline(pipeline.raw);
+                }
+            }
+        }
+
+        for element in self.blas_s.data.write().map.drain(..) {
+            if let Element::Occupied(blas, _) = element {
+                let device = &devices[blas.device_id.value];
+                if let Some(raw) = blas.raw {
+                    unsafe {
+                        device.raw.destroy_acceleration_structure(raw);
+                    }
+                }
+            }
+        }
+
+        for element in self.tlas_s.data.write().map.drain(..) {
+            if let Element::Occupied(tlas, _) = element {
+                let device = &devices[tlas.device_id.value];
+                if let Some(raw) = tlas.raw {
+                    unsafe {
+                        device.raw.destroy_acceleration_structure(raw);
+                    }
+                }
+                if let Some(raw) = tlas.instance_buffer {
+                    unsafe {
+                        device.raw.destroy_buffer(raw);
+                    }
                 }
             }
         }

@@ -320,6 +320,7 @@ pub(crate) struct BindGroupStates<A: HalApi> {
     pub textures: TextureBindGroupState<A>,
     pub views: StatelessBindGroupSate<resource::TextureView<A>, id::TextureViewId>,
     pub samplers: StatelessBindGroupSate<resource::Sampler<A>, id::SamplerId>,
+    pub acceleration_structures: StatelessBindGroupSate<resource::Tlas<A>, id::TlasId>,
 }
 
 impl<A: HalApi> BindGroupStates<A> {
@@ -329,6 +330,7 @@ impl<A: HalApi> BindGroupStates<A> {
             textures: TextureBindGroupState::new(),
             views: StatelessBindGroupSate::new(),
             samplers: StatelessBindGroupSate::new(),
+            acceleration_structures: StatelessBindGroupSate::new(),
         }
     }
 
@@ -341,6 +343,7 @@ impl<A: HalApi> BindGroupStates<A> {
         self.textures.optimize();
         self.views.optimize();
         self.samplers.optimize();
+        self.acceleration_structures.optimize();
     }
 }
 
@@ -487,6 +490,8 @@ pub(crate) struct Tracker<A: HalApi> {
     pub render_pipelines: StatelessTracker<A, pipeline::RenderPipeline<A>, id::RenderPipelineId>,
     pub bundles: StatelessTracker<A, command::RenderBundle<A>, id::RenderBundleId>,
     pub query_sets: StatelessTracker<A, resource::QuerySet<A>, id::QuerySetId>,
+    pub blas_s: StatelessTracker<A, resource::Blas<A>, id::BlasId>,
+    pub tlas_s: StatelessTracker<A, resource::Tlas<A>, id::TlasId>,
 }
 
 impl<A: HalApi> Tracker<A> {
@@ -501,6 +506,8 @@ impl<A: HalApi> Tracker<A> {
             render_pipelines: StatelessTracker::new(),
             bundles: StatelessTracker::new(),
             query_sets: StatelessTracker::new(),
+            blas_s: StatelessTracker::new(),
+            tlas_s: StatelessTracker::new(),
         }
     }
 
@@ -520,6 +527,8 @@ impl<A: HalApi> Tracker<A> {
         >,
         bundles: Option<&storage::Storage<command::RenderBundle<A>, id::RenderBundleId>>,
         query_sets: Option<&storage::Storage<resource::QuerySet<A>, id::QuerySetId>>,
+        blas_s: Option<&storage::Storage<resource::Blas<A>, id::BlasId>>,
+        tlas_s: Option<&storage::Storage<resource::Tlas<A>, id::TlasId>>,
     ) {
         if let Some(buffers) = buffers {
             self.buffers.set_size(buffers.len());
@@ -547,6 +556,12 @@ impl<A: HalApi> Tracker<A> {
         };
         if let Some(query_sets) = query_sets {
             self.query_sets.set_size(query_sets.len());
+        };
+        if let Some(blas_s) = blas_s {
+            self.blas_s.set_size(blas_s.len());
+        };
+        if let Some(tlas_s) = tlas_s {
+            self.tlas_s.set_size(tlas_s.len());
         };
     }
 

@@ -32,7 +32,7 @@ use smallvec::SmallVec;
 use thiserror::Error;
 use wgt::{TextureFormat, TextureSampleType, TextureViewDimension};
 
-use std::{borrow::Cow, iter, num::NonZeroU32};
+use std::{borrow::Cow, iter, num::NonZeroU32, sync::atomic::AtomicU64};
 
 use super::{
     life, queue, DeviceDescriptor, DeviceError, ImplicitPipelineContext, UserClosures, EP_FAILURE,
@@ -88,7 +88,8 @@ pub struct Device<A: HalApi> {
     // TODO: move this behind another mutex. This would allow several methods to
     // switch to borrow Device immutably, such as `write_buffer`, `write_texture`,
     // and `buffer_unmap`.
-    pub(super) pending_writes: queue::PendingWrites<A>,
+    pub(crate) pending_writes: queue::PendingWrites<A>,
+    pub(crate) last_acceleration_structure_build_command_index: AtomicU64,
     #[cfg(feature = "trace")]
     pub(crate) trace: Option<Mutex<trace::Trace>>,
 }
@@ -211,6 +212,7 @@ impl<A: HalApi> Device<A> {
             features: desc.features,
             downlevel,
             pending_writes,
+            last_acceleration_structure_build_command_index: AtomicU64::new(0),
         })
     }
 
@@ -314,7 +316,9 @@ impl<A: HalApi> Device<A> {
             let (buffer_guard, mut token) = hub.buffers.read(&mut token);
             let (texture_guard, mut token) = hub.textures.read(&mut token);
             let (texture_view_guard, mut token) = hub.texture_views.read(&mut token);
-            let (sampler_guard, _) = hub.samplers.read(&mut token);
+            let (sampler_guard, mut token) = hub.samplers.read(&mut token);
+            let (blas_guard, mut token) = hub.blas_s.read(&mut token);
+            let (tlas_guard, _) = hub.tlas_s.read(&mut token);
 
             for id in trackers.buffers.used() {
                 if buffer_guard[id].life_guard.ref_count.is_none() {
@@ -354,6 +358,16 @@ impl<A: HalApi> Device<A> {
             for id in trackers.query_sets.used() {
                 if query_set_guard[id].life_guard.ref_count.is_none() {
                     self.temp_suspected.query_sets.push(id);
+                }
+            }
+            for id in trackers.blas_s.used() {
+                if blas_guard[id].life_guard.ref_count.is_none() {
+                    self.temp_suspected.blas_s.push(id);
+                }
+            }
+            for id in trackers.tlas_s.used() {
+                if tlas_guard[id].life_guard.ref_count.is_none() {
+                    self.temp_suspected.tlas_s.push(id);
                 }
             }
         }
@@ -1276,6 +1290,10 @@ impl<A: HalApi> Device<A> {
                 .flags
                 .contains(wgt::DownlevelFlags::MULTISAMPLED_SHADING),
         );
+        caps.set(
+            Caps::RAY_QUERY,
+            self.features.contains(wgt::Features::RAY_QUERY),
+        );
 
         let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
             .validate(&module)
@@ -1540,6 +1558,7 @@ impl<A: HalApi> Device<A> {
                         },
                     )
                 }
+                Bt::AccelerationStructure => (None, WritableStorage::No),
             };
 
             // Validate the count parameter
@@ -1833,7 +1852,8 @@ impl<A: HalApi> Device<A> {
         let (buffer_guard, mut token) = hub.buffers.read(token);
         let (texture_guard, mut token) = hub.textures.read(&mut token); //skip token
         let (texture_view_guard, mut token) = hub.texture_views.read(&mut token);
-        let (sampler_guard, _) = hub.samplers.read(&mut token);
+        let (sampler_guard, mut token) = hub.samplers.read(&mut token);
+        let (tlas_guard, _) = hub.tlas_s.read(&mut token);
 
         let mut used_buffer_ranges = Vec::new();
         let mut used_texture_ranges = Vec::new();
@@ -1841,6 +1861,7 @@ impl<A: HalApi> Device<A> {
         let mut hal_buffers = Vec::new();
         let mut hal_samplers = Vec::new();
         let mut hal_textures = Vec::new();
+        let mut hal_tlas_s = Vec::new();
         for entry in desc.entries.iter() {
             let binding = entry.binding;
             // Find the corresponding declaration in the layout
@@ -2003,6 +2024,18 @@ impl<A: HalApi> Device<A> {
 
                     (res_index, num_bindings)
                 }
+                Br::AccelerationStructure(id) => {
+                    let tlas = used
+                        .acceleration_structures
+                        .add_single(&tlas_guard, id)
+                        .ok_or(Error::InvalidTlas(id))?;
+
+                    let raw = tlas.raw.as_ref().ok_or(Error::InvalidTlas(id))?;
+
+                    let res_index = hal_tlas_s.len();
+                    hal_tlas_s.push(raw);
+                    (res_index, 1)
+                }
             };
 
             hal_entries.push(hal::BindGroupEntry {
@@ -2028,6 +2061,7 @@ impl<A: HalApi> Device<A> {
             buffers: &hal_buffers,
             samplers: &hal_samplers,
             textures: &hal_textures,
+            acceleration_structures: &hal_tlas_s,
         };
         let raw = unsafe {
             self.raw

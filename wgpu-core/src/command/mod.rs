@@ -5,6 +5,7 @@ mod compute;
 mod draw;
 mod memory_init;
 mod query;
+mod ray_tracing;
 mod render;
 mod transfer;
 
@@ -19,6 +20,7 @@ use self::memory_init::CommandBufferTextureMemoryActions;
 
 use crate::error::{ErrorFormatter, PrettyError};
 use crate::init_tracker::BufferInitTrackerAction;
+use crate::ray_tracing::{BlasAction, TlasAction};
 use crate::track::{Tracker, UsageScope};
 use crate::{
     global::Global,
@@ -100,6 +102,8 @@ pub struct BakedCommands<A: HalApi> {
     pub(crate) trackers: Tracker<A>,
     buffer_memory_init_actions: Vec<BufferInitTrackerAction>,
     texture_memory_actions: CommandBufferTextureMemoryActions,
+    blas_actions: Vec<BlasAction>,
+    tlas_actions: Vec<TlasAction>,
 }
 
 pub(crate) struct DestroyedBufferError(pub id::BufferId);
@@ -113,6 +117,8 @@ pub struct CommandBuffer<A: HalApi> {
     buffer_memory_init_actions: Vec<BufferInitTrackerAction>,
     texture_memory_actions: CommandBufferTextureMemoryActions,
     pub(crate) pending_query_resets: QueryResetMap<A>,
+    blas_actions: Vec<BlasAction>,
+    tlas_actions: Vec<TlasAction>,
     limits: wgt::Limits,
     support_clear_texture: bool,
     #[cfg(feature = "trace")]
@@ -142,6 +148,8 @@ impl<A: HalApi> CommandBuffer<A> {
             buffer_memory_init_actions: Default::default(),
             texture_memory_actions: Default::default(),
             pending_query_resets: QueryResetMap::new(),
+            blas_actions: Default::default(),
+            tlas_actions: Default::default(),
             limits,
             support_clear_texture: features.contains(wgt::Features::CLEAR_TEXTURE),
             #[cfg(feature = "trace")]
@@ -238,6 +246,8 @@ impl<A: HalApi> CommandBuffer<A> {
             trackers: self.trackers,
             buffer_memory_init_actions: self.buffer_memory_init_actions,
             texture_memory_actions: self.texture_memory_actions,
+            blas_actions: self.blas_actions,
+            tlas_actions: self.tlas_actions,
         }
     }
 }

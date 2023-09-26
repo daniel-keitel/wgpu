@@ -161,6 +161,8 @@ pub trait GlobalIdentityHandlerFactory:
     + IdentityHandlerFactory<id::TextureViewId>
     + IdentityHandlerFactory<id::SamplerId>
     + IdentityHandlerFactory<id::SurfaceId>
+    + IdentityHandlerFactory<id::BlasId>
+    + IdentityHandlerFactory<id::TlasId>
 {
     fn ids_are_generated_in_wgpu() -> bool;
 }
