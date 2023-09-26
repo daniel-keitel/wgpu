@@ -5,6 +5,8 @@ use hal::{
 };
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
+use wgpu_hal::InstanceError;
+
 use glam::{Affine3A, Mat4, Vec3};
 use std::{
     borrow::{Borrow, Cow},
@@ -216,7 +218,7 @@ struct Example<A: hal::Api> {
 }
 
 impl<A: hal::Api> Example<A> {
-    fn init(window: &winit::window::Window) -> Result<Self, hal::InstanceError> {
+    fn init(window: &winit::window::Window) -> Result<Self, Box<dyn std::error::Error>> {
         let instance_desc = hal::InstanceDescriptor {
             name: "example",
             flags: if cfg!(debug_assertions) {
@@ -237,14 +239,14 @@ impl<A: hal::Api> Example<A> {
         let (adapter, features) = unsafe {
             let mut adapters = instance.enumerate_adapters();
             if adapters.is_empty() {
-                return Err(hal::InstanceError);
+                return Err("no adapters found".into());
             }
             let exposed = adapters.swap_remove(0);
             dbg!(exposed.features);
             (exposed.adapter, exposed.features)
         };
         let surface_caps =
-            unsafe { adapter.surface_capabilities(&surface) }.ok_or(hal::InstanceError)?;
+            unsafe { adapter.surface_capabilities(&surface) }.ok_or("failed to get surface capabilities")?;
         log::info!("Surface caps: {:#?}", surface_caps);
 
         let hal::OpenDevice { device, mut queue } =

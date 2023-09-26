@@ -631,6 +631,7 @@ fn ray_cube_compute() {
                 <Example as wgpu_example::framework::Example>::required_downlevel_capabilities(),
             required_limits: <Example as wgpu_example::framework::Example>::required_limits(),
             failures: Vec::new(),
+            skips: Vec::new(),
         },
         comparisons: &[wgpu_test::ComparisonType::Mean(0.02)],
     });
