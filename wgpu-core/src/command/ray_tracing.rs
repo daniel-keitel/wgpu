@@ -1376,7 +1376,7 @@ impl<A: HalApi> BakedCommands<A> {
                         let blas = blas_guard
                             .get(action.id)
                             .map_err(|_| ValidateBlasActionsError::InvalidBlas(action.id))?;
-                        if blas.built_index == None {
+                        if blas.built_index.is_none() {
                             return Err(ValidateBlasActionsError::UsedUnbuilt(action.id));
                         }
                     }
@@ -1414,7 +1414,7 @@ impl<A: HalApi> BakedCommands<A> {
                     let tlas_build_index = tlas.built_index;
                     let dependencies = &tlas.dependencies;
 
-                    if tlas_build_index == None {
+                    if tlas_build_index.is_none() {
                         return Err(ValidateTlasActionsError::UsedUnbuilt(action.id));
                     }
                     for dependency in dependencies {
@@ -1422,7 +1422,7 @@ impl<A: HalApi> BakedCommands<A> {
                             ValidateTlasActionsError::InvalidBlas(*dependency, action.id)
                         })?;
                         let blas_build_index = blas.built_index;
-                        if blas_build_index == None {
+                        if blas_build_index.is_none() {
                             return Err(ValidateTlasActionsError::UsedUnbuilt(action.id));
                         }
                         if blas_build_index.unwrap() > tlas_build_index.unwrap() {
