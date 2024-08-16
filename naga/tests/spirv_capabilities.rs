@@ -2,7 +2,7 @@
 Test SPIR-V backend capability checks.
 */
 
-#![cfg(all(feature = "wgsl-in", feature = "spv-out"))]
+#![cfg(all(feature = "wgsl-in", spv_out))]
 
 use spirv::Capability as Ca;
 
@@ -173,6 +173,38 @@ fn storage_image_formats() {
         r#"
             @group(0) @binding(0)
             var image_rg32f: texture_storage_2d<rg32float, read>;
+        "#,
+    );
+}
+
+#[test]
+fn float64() {
+    require(
+        &[Ca::Float64],
+        r#"
+            fn f(x: f64) -> f64 {
+                return x;
+            }
+        "#,
+    );
+}
+
+#[test]
+fn int64() {
+    require(
+        &[Ca::Int64],
+        r#"
+            fn f(x: i64) -> i64 {
+                return x;
+            }
+        "#,
+    );
+    require(
+        &[Ca::Int64],
+        r#"
+            fn f(x: u64) -> u64 {
+                return x;
+            }
         "#,
     );
 }

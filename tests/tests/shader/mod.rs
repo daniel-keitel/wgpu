@@ -15,6 +15,8 @@ use wgpu::{
 
 use wgpu_test::TestingContext;
 
+pub mod compilation_messages;
+pub mod data_builtins;
 pub mod numeric_builtins;
 pub mod struct_layout;
 pub mod zero_init_workgroup_mem;
@@ -149,6 +151,12 @@ impl ShaderTest {
 
     fn header(mut self, header: String) -> Self {
         self.header = header;
+
+        self
+    }
+
+    fn output_type(mut self, output_type: String) -> Self {
+        self.output_type = output_type;
 
         self
     }
@@ -306,7 +314,9 @@ async fn shader_input_output_test(
                 label: Some(&format!("pipeline {test_name}")),
                 layout: Some(&pll),
                 module: &sm,
-                entry_point: "cs_main",
+                entry_point: Some("cs_main"),
+                compilation_options: Default::default(),
+                cache: None,
             });
 
         // -- Initializing data --

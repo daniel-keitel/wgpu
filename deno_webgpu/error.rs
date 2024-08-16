@@ -1,10 +1,12 @@
-// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+
 use deno_core::error::AnyError;
 use deno_core::ResourceId;
 use serde::Serialize;
 use std::convert::From;
 use std::error::Error;
 use std::fmt;
+use std::fmt::Write;
 use wgpu_core::binding_model::CreateBindGroupError;
 use wgpu_core::binding_model::CreateBindGroupLayoutError;
 use wgpu_core::binding_model::CreatePipelineLayoutError;
@@ -23,7 +25,6 @@ use wgpu_core::device::DeviceError;
 use wgpu_core::pipeline::CreateComputePipelineError;
 use wgpu_core::pipeline::CreateRenderPipelineError;
 use wgpu_core::pipeline::CreateShaderModuleError;
-#[cfg(feature = "surface")]
 use wgpu_core::present::ConfigureSurfaceError;
 use wgpu_core::resource::BufferAccessError;
 use wgpu_core::resource::CreateBufferError;
@@ -34,12 +35,28 @@ use wgpu_core::resource::CreateTextureViewError;
 
 fn fmt_err(err: &(dyn Error + 'static)) -> String {
     let mut output = err.to_string();
+    let mut level = 0;
 
-    let mut e = err.source();
-    while let Some(source) = e {
-        output.push_str(&format!(": {source}"));
-        e = source.source();
+    fn print_tree(output: &mut String, level: &mut usize, e: &(dyn Error + 'static)) {
+        let mut print = |e: &(dyn Error + 'static)| {
+            writeln!(output, "{}{}", " ".repeat(*level * 2), e).unwrap();
+
+            if let Some(e) = e.source() {
+                *level += 1;
+                print_tree(output, level, e);
+                *level -= 1;
+            }
+        };
+        if let Some(multi) = e.downcast_ref::<wgpu_core::error::MultiError>() {
+            for e in multi.errors() {
+                print(e);
+            }
+        } else {
+            print(e);
+        }
     }
+
+    print_tree(&mut output, &mut level, err);
 
     output
 }
@@ -87,6 +104,7 @@ pub enum WebGpuError {
     Lost,
     OutOfMemory,
     Validation(String),
+    Internal,
 }
 
 impl From<CreateBufferError> for WebGpuError {
@@ -277,7 +295,6 @@ impl From<ClearError> for WebGpuError {
     }
 }
 
-#[cfg(feature = "surface")]
 impl From<ConfigureSurfaceError> for WebGpuError {
     fn from(err: ConfigureSurfaceError) -> Self {
         WebGpuError::Validation(fmt_err(&err))

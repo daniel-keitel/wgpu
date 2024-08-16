@@ -5,9 +5,11 @@
 
 use std::{num::NonZeroU64, ops::Range};
 
-use wgpu::util::{BufferInitDescriptor, DeviceExt};
-
+use itertools::Itertools;
+use strum::IntoEnumIterator;
+use wgpu::util::{BufferInitDescriptor, DeviceExt, RenderEncoder};
 use wgpu_test::{gpu_test, GpuTestConfiguration, TestParameters, TestingContext};
+use wgt::RenderBundleDescriptor;
 
 /// Generic struct representing a draw call
 struct Draw {
@@ -19,7 +21,7 @@ struct Draw {
 
 impl Draw {
     /// Directly execute the draw call
-    fn execute(&self, rpass: &mut wgpu::RenderPass<'_>) {
+    fn execute(&self, rpass: &mut dyn RenderEncoder<'_>) {
         if let Some(base_vertex) = self.base_vertex {
             rpass.draw_indexed(self.vertex.clone(), base_vertex, self.instance.clone());
         } else {
@@ -64,7 +66,7 @@ impl Draw {
     /// Execute the draw call from the given indirect buffer
     fn execute_indirect<'rpass>(
         &self,
-        rpass: &mut wgpu::RenderPass<'rpass>,
+        rpass: &mut dyn RenderEncoder<'rpass>,
         indirect: &'rpass wgpu::Buffer,
         offset: &mut u64,
     ) {
@@ -78,7 +80,7 @@ impl Draw {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, strum::EnumIter)]
 enum TestCase {
     /// A single draw call with 6 vertices
     Draw,
@@ -93,14 +95,6 @@ enum TestCase {
 }
 
 impl TestCase {
-    const ARRAY: [Self; 5] = [
-        Self::Draw,
-        Self::DrawNonZeroFirstVertex,
-        Self::DrawBaseVertex,
-        Self::DrawInstanced,
-        Self::DrawNonZeroFirstInstance,
-    ];
-
     // Get the draw calls for this test case
     fn draws(&self) -> &'static [Draw] {
         match self {
@@ -147,7 +141,7 @@ impl TestCase {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, strum::EnumIter)]
 enum IdSource {
     /// Use buffers to load the vertex and instance index
     Buffers,
@@ -155,24 +149,23 @@ enum IdSource {
     Builtins,
 }
 
-impl IdSource {
-    const ARRAY: [Self; 2] = [Self::Buffers, Self::Builtins];
-}
-
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, strum::EnumIter)]
 enum DrawCallKind {
     Direct,
     Indirect,
 }
 
-impl DrawCallKind {
-    const ARRAY: [Self; 2] = [Self::Direct, Self::Indirect];
+#[derive(Debug, Copy, Clone, strum::EnumIter)]
+enum EncoderKind {
+    RenderPass,
+    RenderBundle,
 }
 
 struct Test {
     case: TestCase,
     id_source: IdSource,
     draw_call_kind: DrawCallKind,
+    encoder_kind: EncoderKind,
 }
 
 impl Test {
@@ -265,15 +258,17 @@ async fn vertex_index_common(ctx: TestingContext) {
         layout: Some(&ppl),
         vertex: wgpu::VertexState {
             buffers: &[],
-            entry_point: "vs_main_builtin",
             module: &shader,
+            entry_point: Some("vs_main_builtin"),
+            compilation_options: Default::default(),
         },
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
-            entry_point: "fs_main",
             module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 blend: None,
@@ -281,9 +276,11 @@ async fn vertex_index_common(ctx: TestingContext) {
             })],
         }),
         multiview: None,
+        cache: None,
     };
     let builtin_pipeline = ctx.device.create_render_pipeline(&pipeline_desc);
-    pipeline_desc.vertex.entry_point = "vs_main_buffers";
+
+    pipeline_desc.vertex.entry_point = Some("vs_main_buffers");
     pipeline_desc.vertex.buffers = &[
         wgpu::VertexBufferLayout {
             array_stride: 4,
@@ -321,18 +318,17 @@ async fn vertex_index_common(ctx: TestingContext) {
         )
         .create_view(&wgpu::TextureViewDescriptor::default());
 
-    let mut tests = Vec::with_capacity(5 * 2 * 2);
-    for case in TestCase::ARRAY {
-        for id_source in IdSource::ARRAY {
-            for draw_call_kind in DrawCallKind::ARRAY {
-                tests.push(Test {
-                    case,
-                    id_source,
-                    draw_call_kind,
-                })
-            }
-        }
-    }
+    let tests = TestCase::iter()
+        .cartesian_product(IdSource::iter())
+        .cartesian_product(DrawCallKind::iter())
+        .cartesian_product(EncoderKind::iter())
+        .map(|(((case, id_source), draw_call_kind), encoder_kind)| Test {
+            case,
+            id_source,
+            draw_call_kind,
+            encoder_kind,
+        })
+        .collect::<Vec<_>>();
 
     let features = ctx.adapter.features();
 
@@ -345,7 +341,7 @@ async fn vertex_index_common(ctx: TestingContext) {
 
         let expected = test.expectation(&ctx);
 
-        let buffer_size = 4 * expected.len() as u64;
+        let buffer_size = (std::mem::size_of_val(&expected[0]) * expected.len()) as u64;
         let cpu_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: buffer_size,
@@ -373,6 +369,7 @@ async fn vertex_index_common(ctx: TestingContext) {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
+        let render_bundle;
         let indirect_buffer;
         let mut rpass = encoder1.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -386,34 +383,64 @@ async fn vertex_index_common(ctx: TestingContext) {
             occlusion_query_set: None,
         });
 
-        rpass.set_vertex_buffer(0, identity_buffer.slice(..));
-        rpass.set_vertex_buffer(1, identity_buffer.slice(..));
-        rpass.set_index_buffer(identity_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, &bg, &[]);
+        {
+            // Need to scope render_bundle_encoder since it's not Send and would otherwise
+            // infect the function if not going out of scope before an await call.
+            // (it is dropped via `take` + `finish` earlier, but compiler does not take this into account)
+            let mut render_bundle_encoder = match test.encoder_kind {
+                EncoderKind::RenderPass => None,
+                EncoderKind::RenderBundle => Some(ctx.device.create_render_bundle_encoder(
+                    &wgpu::RenderBundleEncoderDescriptor {
+                        label: Some("test renderbundle encoder"),
+                        color_formats: &[Some(wgpu::TextureFormat::Rgba8Unorm)],
+                        depth_stencil: None,
+                        sample_count: 1,
+                        multiview: None,
+                    },
+                )),
+            };
 
-        let draws = test.case.draws();
+            let render_encoder: &mut dyn RenderEncoder = render_bundle_encoder
+                .as_mut()
+                .map(|r| r as &mut dyn RenderEncoder)
+                .unwrap_or(&mut rpass);
 
-        match test.draw_call_kind {
-            DrawCallKind::Direct => {
-                for draw in draws {
-                    draw.execute(&mut rpass);
+            render_encoder.set_vertex_buffer(0, identity_buffer.slice(..));
+            render_encoder.set_vertex_buffer(1, identity_buffer.slice(..));
+            render_encoder.set_index_buffer(identity_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_encoder.set_pipeline(pipeline);
+            render_encoder.set_bind_group(0, &bg, &[]);
+
+            let draws = test.case.draws();
+
+            match test.draw_call_kind {
+                DrawCallKind::Direct => {
+                    for draw in draws {
+                        draw.execute(render_encoder);
+                    }
+                }
+                DrawCallKind::Indirect => {
+                    let mut indirect_bytes = Vec::new();
+                    for draw in draws {
+                        draw.add_to_buffer(&mut indirect_bytes, features);
+                    }
+                    indirect_buffer = ctx.device.create_buffer_init(&BufferInitDescriptor {
+                        label: Some("indirect"),
+                        contents: &indirect_bytes,
+                        usage: wgpu::BufferUsages::INDIRECT,
+                    });
+                    let mut offset = 0;
+                    for draw in draws {
+                        draw.execute_indirect(render_encoder, &indirect_buffer, &mut offset);
+                    }
                 }
             }
-            DrawCallKind::Indirect => {
-                let mut indirect_bytes = Vec::new();
-                for draw in draws {
-                    draw.add_to_buffer(&mut indirect_bytes, features);
-                }
-                indirect_buffer = ctx.device.create_buffer_init(&BufferInitDescriptor {
-                    label: Some("indirect"),
-                    contents: &indirect_bytes,
-                    usage: wgpu::BufferUsages::INDIRECT,
+
+            if let Some(render_bundle_encoder) = render_bundle_encoder.take() {
+                render_bundle = render_bundle_encoder.finish(&RenderBundleDescriptor {
+                    label: Some("test renderbundle"),
                 });
-                let mut offset = 0;
-                for draw in draws {
-                    draw.execute_indirect(&mut rpass, &indirect_buffer, &mut offset);
-                }
+                rpass.execute_bundles([&render_bundle]);
             }
         }
 
@@ -439,21 +466,18 @@ async fn vertex_index_common(ctx: TestingContext) {
             .panic_on_timeout();
         let data: Vec<u32> = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
 
+        let case_name = format!(
+            "Case {:?} getting indices from {:?} using {:?} draw calls, encoded with a {:?}",
+            test.case, test.id_source, test.draw_call_kind, test.encoder_kind
+        );
         if data != expected {
             eprintln!(
-                "Failed: Got: {:?} Expected: {:?} - Case {:?} getting indices from {:?} using {:?} draw calls",
-                data,
-                expected,
-                test.case,
-                test.id_source,
-                test.draw_call_kind
+                "Failed: Got: {:?} Expected: {:?} - {case_name}",
+                data, expected,
             );
             failed = true;
         } else {
-            eprintln!(
-                "Passed: Case {:?} getting indices from {:?} using {:?} draw calls",
-                test.case, test.id_source, test.draw_call_kind
-            );
+            eprintln!("Passed: {case_name}");
         }
     }
 

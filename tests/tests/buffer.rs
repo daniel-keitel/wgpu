@@ -217,15 +217,21 @@ static MINIMUM_BUFFER_BINDING_SIZE_LAYOUT: GpuTestConfiguration = GpuTestConfigu
                 push_constant_ranges: &[],
             });
 
-        wgpu_test::fail(&ctx.device, || {
-            ctx.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: None,
-                    layout: Some(&pipeline_layout),
-                    module: &shader_module,
-                    entry_point: "main",
-                });
-        });
+        wgpu_test::fail(
+            &ctx.device,
+            || {
+                ctx.device
+                    .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: None,
+                        layout: Some(&pipeline_layout),
+                        module: &shader_module,
+                        entry_point: Some("main"),
+                        compilation_options: Default::default(),
+                        cache: None,
+                    });
+            },
+            None,
+        );
     });
 
 /// The WebGPU algorithm [validating shader binding][vsb] requires
@@ -291,7 +297,9 @@ static MINIMUM_BUFFER_BINDING_SIZE_DISPATCH: GpuTestConfiguration = GpuTestConfi
                 label: None,
                 layout: Some(&pipeline_layout),
                 module: &shader_module,
-                entry_point: "main",
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
             });
 
         let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -310,19 +318,82 @@ static MINIMUM_BUFFER_BINDING_SIZE_DISPATCH: GpuTestConfiguration = GpuTestConfi
             }],
         });
 
-        wgpu_test::fail(&ctx.device, || {
-            let mut encoder = ctx.device.create_command_encoder(&Default::default());
+        wgpu_test::fail(
+            &ctx.device,
+            || {
+                let mut encoder = ctx.device.create_command_encoder(&Default::default());
 
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: None,
+                });
+
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.set_pipeline(&pipeline);
+                pass.dispatch_workgroups(1, 1, 1);
+
+                drop(pass);
+                let _ = encoder.finish();
+            },
+            None,
+        );
+    });
+
+#[gpu_test]
+static CLEAR_OFFSET_OUTSIDE_RESOURCE_BOUNDS: GpuTestConfiguration = GpuTestConfiguration::new()
+    .parameters(TestParameters::default())
+    .run_sync(|ctx| {
+        let size = 16;
+
+        let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size,
+            usage: wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let out_of_bounds = size.checked_add(wgpu::COPY_BUFFER_ALIGNMENT).unwrap();
+
+        wgpu_test::fail(
+            &ctx.device,
+            || {
+                ctx.device
+                    .create_command_encoder(&Default::default())
+                    .clear_buffer(&buffer, out_of_bounds, None)
+            },
+            Some("Clear of 20..20 would end up overrunning the bounds of the buffer of size 16"),
+        );
+    });
+
+#[gpu_test]
+static CLEAR_OFFSET_PLUS_SIZE_OUTSIDE_U64_BOUNDS: GpuTestConfiguration =
+    GpuTestConfiguration::new()
+        .parameters(TestParameters::default())
+        .run_sync(|ctx| {
+            let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
-                timestamp_writes: None,
+                size: 16, // unimportant for this test
+                usage: wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
 
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.set_pipeline(&pipeline);
-            pass.dispatch_workgroups(1, 1, 1);
+            let max_valid_offset = u64::MAX - (u64::MAX % wgpu::COPY_BUFFER_ALIGNMENT);
+            let smallest_aligned_invalid_size = wgpu::COPY_BUFFER_ALIGNMENT;
 
-            drop(pass);
-            let _ = encoder.finish();
+            wgpu_test::fail(
+                &ctx.device,
+                || {
+                    ctx.device
+                        .create_command_encoder(&Default::default())
+                        .clear_buffer(
+                            &buffer,
+                            max_valid_offset,
+                            Some(smallest_aligned_invalid_size),
+                        )
+                },
+                Some(concat!(
+                    "Clear starts at offset 18446744073709551612 with size of 4, ",
+                    "but these added together exceed `u64::MAX`"
+                )),
+            );
         });
-    });

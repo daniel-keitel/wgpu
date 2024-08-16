@@ -1,4 +1,4 @@
-// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 
 use deno_core::error::AnyError;
 use deno_core::op2;
@@ -21,7 +21,7 @@ impl Resource for WebGpuBindGroupLayout {
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.bind_group_layout_drop(self.1));
+        self.0.bind_group_layout_drop(self.1);
     }
 }
 
@@ -35,7 +35,7 @@ impl Resource for WebGpuBindGroup {
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.bind_group_drop(self.1));
+        self.0.bind_group_drop(self.1);
     }
 }
 
@@ -112,23 +112,9 @@ impl From<GpuTextureSampleType> for wgpu_types::TextureSampleType {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GpuStorageTextureBindingLayout {
-    access: GpuStorageTextureAccess,
+    access: wgpu_types::StorageTextureAccess,
     format: wgpu_types::TextureFormat,
     view_dimension: wgpu_types::TextureViewDimension,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum GpuStorageTextureAccess {
-    WriteOnly,
-}
-
-impl From<GpuStorageTextureAccess> for wgpu_types::StorageTextureAccess {
-    fn from(access: GpuStorageTextureAccess) -> Self {
-        match access {
-            GpuStorageTextureAccess::WriteOnly => wgpu_types::StorageTextureAccess::WriteOnly,
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -165,7 +151,7 @@ impl From<GpuBindingType> for wgpu_types::BindingType {
             },
             GpuBindingType::StorageTexture(storage_texture) => {
                 wgpu_types::BindingType::StorageTexture {
-                    access: storage_texture.access.into(),
+                    access: storage_texture.access,
                     format: storage_texture.format,
                     view_dimension: storage_texture.view_dimension,
                 }
@@ -205,7 +191,7 @@ pub fn op_webgpu_create_bind_group_layout(
         entries: Cow::from(entries),
     };
 
-    gfx_put!(device => instance.device_create_bind_group_layout(
+    gfx_put!(instance.device_create_bind_group_layout(
     device,
     &descriptor,
     None
@@ -240,7 +226,7 @@ pub fn op_webgpu_create_pipeline_layout(
         push_constant_ranges: Default::default(),
     };
 
-    gfx_put!(device => instance.device_create_pipeline_layout(
+    gfx_put!(instance.device_create_pipeline_layout(
     device,
     &descriptor,
     None
@@ -319,7 +305,7 @@ pub fn op_webgpu_create_bind_group(
         entries: Cow::from(entries),
     };
 
-    gfx_put!(device => instance.device_create_bind_group(
+    gfx_put!(instance.device_create_bind_group(
     device,
     &descriptor,
     None

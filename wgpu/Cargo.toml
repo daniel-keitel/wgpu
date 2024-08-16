@@ -21,6 +21,11 @@ targets = [
     "wasm32-unknown-unknown",
 ]
 
+[package.metadata.cargo-machete]
+# Cargo machete can't check build.rs dependencies. See https://github.com/bnjbvr/cargo-machete/issues/100
+ignored = ["cfg_aliases"]
+
+
 [lib]
 
 [features]
@@ -50,7 +55,7 @@ vulkan-portability = ["wgc?/vulkan"]
 ## Enables the GLES backend on Wasm
 ##
 ## * ⚠️ WIP: Currently will also enable GLES dependencies on any other targets.
-webgl = ["hal", "wgc/gles"]
+webgl = ["dep:hal", "wgc/gles"]
 
 #! **Note:** In the documentation, if you see that an item depends on a backend,
 #! it means that the item is only available when that backend is enabled _and_ the backend
@@ -69,7 +74,7 @@ glsl = ["naga/glsl-in", "wgc/glsl"]
 wgsl = ["wgc?/wgsl"]
 
 ## Enable accepting naga IR shaders as input.
-naga-ir = ["naga"]
+naga-ir = ["dep:naga"]
 
 #! ### Logging & Tracing
 # --------------------------------------------------------------------
@@ -79,14 +84,12 @@ naga-ir = ["naga"]
 ## to the validation carried out at public APIs in all builds.
 strict_asserts = ["wgc?/strict_asserts", "wgt/strict_asserts"]
 
-## Log all API entry points at info instead of trace level.
-api_log_info = ["wgc/api_log_info"]
-
 ## Enables serialization via `serde` on common wgpu types.
 serde = ["dep:serde", "wgc/serde"]
 
-## Allow writing of trace capture files. See [`Adapter::request_device`].
-trace = ["serde", "wgc/trace"]
+# Uncomment once we get to https://github.com/gfx-rs/wgpu/issues/5974
+# ## Allow writing of trace capture files. See [`Adapter::request_device`].
+# trace = ["serde", "wgc/trace"]
 
 ## Allow deserializing of trace capture files that were written with the `trace` feature.
 ## To replay a trace file use the [wgpu player](https://github.com/gfx-rs/wgpu/tree/trunk/player).
@@ -94,6 +97,11 @@ replay = ["serde", "wgc/replay"]
 
 #! ### Other
 # --------------------------------------------------------------------
+
+## Internally count resources and events for debugging purposes. If the counters
+## feature is disabled, the counting infrastructure is removed from the build and
+## the exposed counters always return 0.
+counters = ["wgc/counters"]
 
 ## Implement `Send` and `Sync` on Wasm, but only if atomics are not enabled.
 ##
@@ -165,7 +173,6 @@ optional = true
 
 [dependencies]
 arrayvec.workspace = true
-cfg-if.workspace = true
 document-features.workspace = true
 log.workspace = true
 parking_lot.workspace = true
@@ -177,7 +184,6 @@ static_assertions.workspace = true
 
 [dependencies.naga]
 workspace = true
-features = ["clone"]
 optional = true
 
 [build-dependencies]
@@ -194,124 +200,6 @@ web-sys = { workspace = true, features = [
     "Navigator",
     "Node",
     "NodeList",
-    "Gpu",
-    "GpuAdapter",
-    "GpuAddressMode",
-    "GpuAutoLayoutMode",
-    "GpuBindGroup",
-    "GpuBindGroupDescriptor",
-    "GpuBindGroupEntry",
-    "GpuBindGroupLayout",
-    "GpuBindGroupLayoutDescriptor",
-    "GpuBindGroupLayoutEntry",
-    "GpuBlendComponent",
-    "GpuBlendFactor",
-    "GpuBlendOperation",
-    "GpuBlendState",
-    "GpuBuffer",
-    "GpuBufferBinding",
-    "GpuBufferBindingLayout",
-    "GpuBufferBindingType",
-    "GpuBufferDescriptor",
-    "GpuCanvasAlphaMode",
-    "GpuCanvasContext",
-    "GpuCanvasConfiguration",
-    "GpuColorDict",
-    "GpuColorTargetState",
-    "GpuCommandBuffer",
-    "GpuCommandBufferDescriptor",
-    "GpuCommandEncoder",
-    "GpuCommandEncoderDescriptor",
-    "GpuCompareFunction",
-    "GpuCompilationInfo",
-    "GpuCompilationMessage",
-    "GpuCompilationMessageType",
-    "GpuComputePassDescriptor",
-    "GpuComputePassEncoder",
-    "GpuComputePassTimestampWrites",
-    "GpuComputePipeline",
-    "GpuComputePipelineDescriptor",
-    "GpuCullMode",
-    "GpuDepthStencilState",
-    "GpuDevice",
-    "GpuDeviceDescriptor",
-    "GpuDeviceLostInfo",
-    "GpuDeviceLostReason",
-    "GpuError",
-    "GpuErrorFilter",
-    # "GpuExtent2dDict", Not yet implemented in web_sys
-    "GpuExtent3dDict",
-    "GpuFeatureName",
-    "GpuFilterMode",
-    "GpuFragmentState",
-    "GpuFrontFace",
-    "GpuImageCopyBuffer",
-    "GpuImageCopyExternalImage",
-    "GpuImageCopyTexture",
-    "GpuImageCopyTextureTagged",
-    "GpuImageDataLayout",
-    "GpuIndexFormat",
-    "GpuLoadOp",
-    "gpu_map_mode",
-    "GpuMipmapFilterMode",
-    "GpuMultisampleState",
-    "GpuObjectDescriptorBase",
-    "GpuOrigin2dDict",
-    "GpuOrigin3dDict",
-    "GpuOutOfMemoryError",
-    "GpuPipelineDescriptorBase",
-    "GpuPipelineLayout",
-    "GpuPipelineLayoutDescriptor",
-    "GpuPowerPreference",
-    "GpuPrimitiveState",
-    "GpuPrimitiveTopology",
-    "GpuProgrammableStage",
-    "GpuQuerySet",
-    "GpuQuerySetDescriptor",
-    "GpuQueryType",
-    "GpuQueue",
-    "GpuRenderBundle",
-    "GpuRenderBundleDescriptor",
-    "GpuRenderBundleEncoder",
-    "GpuRenderBundleEncoderDescriptor",
-    "GpuRenderPassColorAttachment",
-    "GpuRenderPassDepthStencilAttachment",
-    "GpuRenderPassDescriptor",
-    "GpuRenderPassEncoder",
-    "GpuRenderPipeline",
-    "GpuRenderPipelineDescriptor",
-    "GpuRequestAdapterOptions",
-    "GpuSampler",
-    "GpuSamplerBindingLayout",
-    "GpuSamplerBindingType",
-    "GpuSamplerDescriptor",
-    "GpuShaderModule",
-    "GpuShaderModuleDescriptor",
-    "GpuStencilFaceState",
-    "GpuStencilOperation",
-    "GpuStorageTextureAccess",
-    "GpuStorageTextureBindingLayout",
-    "GpuStoreOp",
-    "GpuSupportedFeatures",
-    "GpuSupportedLimits",
-    "GpuTexture",
-    "GpuTextureAspect",
-    "GpuTextureBindingLayout",
-    "GpuTextureDescriptor",
-    "GpuTextureDimension",
-    "GpuTextureFormat",
-    "GpuTextureSampleType",
-    "GpuTextureView",
-    "GpuTextureViewDescriptor",
-    "GpuTextureViewDimension",
-    "GpuUncapturedErrorEvent",
-    "GpuUncapturedErrorEventInit",
-    "GpuValidationError",
-    "GpuVertexAttribute",
-    "GpuVertexBufferLayout",
-    "GpuVertexFormat",
-    "GpuVertexState",
-    "GpuVertexStepMode",
     "HtmlCanvasElement",
     "OffscreenCanvas",
     "ImageBitmap",
@@ -319,6 +207,9 @@ web-sys = { workspace = true, features = [
     "Window",
     "WorkerGlobalScope",
     "WorkerNavigator",
+    # Needed by webgpu_sys
+    "Event",
+    "EventTarget",
 ] }
 wasm-bindgen.workspace = true
 js-sys.workspace = true

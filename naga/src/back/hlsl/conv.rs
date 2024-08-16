@@ -21,8 +21,16 @@ impl crate::Scalar {
     /// <https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-scalar>
     pub(super) const fn to_hlsl_str(self) -> Result<&'static str, Error> {
         match self.kind {
-            crate::ScalarKind::Sint => Ok("int"),
-            crate::ScalarKind::Uint => Ok("uint"),
+            crate::ScalarKind::Sint => match self.width {
+                4 => Ok("int"),
+                8 => Ok("int64_t"),
+                _ => Err(Error::UnsupportedScalar(self)),
+            },
+            crate::ScalarKind::Uint => match self.width {
+                4 => Ok("uint"),
+                8 => Ok("uint64_t"),
+                _ => Err(Error::UnsupportedScalar(self)),
+            },
             crate::ScalarKind::Float => match self.width {
                 2 => Ok("half"),
                 4 => Ok("float"),
@@ -124,7 +132,7 @@ impl crate::StorageFormat {
             Self::Rg8Sint | Self::Rg16Sint => "int2",
             Self::Rg8Uint | Self::Rg16Uint => "uint2",
 
-            Self::Rg11b10Float => "float3",
+            Self::Rg11b10UFloat => "float3",
 
             Self::Rgba16Float | Self::R32Float | Self::Rg32Float | Self::Rgba32Float => "float4",
             Self::Rgba8Unorm | Self::Bgra8Unorm | Self::Rgba16Unorm | Self::Rgb10a2Unorm => {
@@ -171,6 +179,11 @@ impl crate::BuiltIn {
             // to this field will get replaced with references to `SPECIAL_CBUF_VAR`
             // in `Writer::write_expr`.
             Self::NumWorkGroups => "SV_GroupID",
+            // These builtins map to functions
+            Self::SubgroupSize
+            | Self::SubgroupInvocationId
+            | Self::NumSubgroups
+            | Self::SubgroupId => unreachable!(),
             Self::BaseInstance | Self::BaseVertex | Self::WorkGroupSize => {
                 return Err(Error::Unimplemented(format!("builtin {self:?}")))
             }

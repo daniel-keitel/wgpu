@@ -35,6 +35,7 @@ async fn run(_path: Option<String>) {
                 label: None,
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::downlevel_defaults(),
+                memory_hints: wgpu::MemoryHints::MemoryUsage,
             },
             None,
         )
@@ -99,7 +100,9 @@ async fn run(_path: Option<String>) {
         label: None,
         layout: Some(&pipeline_layout),
         module: &shader,
-        entry_point: "main",
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
     });
 
     log::info!("Wgpu context set up.");
@@ -169,7 +172,7 @@ pub fn main() {
             .init();
 
         let path = std::env::args()
-            .nth(1)
+            .nth(2)
             .unwrap_or_else(|| "please_don't_git_push_me.png".to_string());
         pollster::block_on(run(Some(path)));
     }

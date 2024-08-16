@@ -1,4 +1,4 @@
-// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 #![cfg(not(target_arch = "wasm32"))]
 #![warn(unsafe_op_in_unsafe_fn)]
 
@@ -19,50 +19,21 @@ pub use wgpu_types;
 use error::DomExceptionOperationError;
 use error::WebGpuResult;
 
+pub const UNSTABLE_FEATURE_NAME: &str = "webgpu";
+
 #[macro_use]
 mod macros {
-    macro_rules! gfx_select {
-    ($id:expr => $p0:ident.$p1:tt.$method:ident $params:tt) => {
-      gfx_select!($id => {$p0.$p1}, $method $params)
-    };
-
-    ($id:expr => $p0:ident.$method:ident $params:tt) => {
-      gfx_select!($id => {$p0}, $method $params)
-    };
-
-    ($id:expr => {$($c:tt)*}, $method:ident $params:tt) => {
-      match $id.backend() {
-        #[cfg(any(
-            all(not(target_arch = "wasm32"), not(target_os = "ios"), not(target_os = "macos")),
-            feature = "vulkan-portability"
-        ))]
-        wgpu_types::Backend::Vulkan => $($c)*.$method::<wgpu_core::api::Vulkan> $params,
-        #[cfg(all(not(target_arch = "wasm32"), any(target_os = "ios", target_os = "macos")))]
-        wgpu_types::Backend::Metal => $($c)*.$method::<wgpu_core::api::Metal> $params,
-        #[cfg(all(not(target_arch = "wasm32"), windows))]
-        wgpu_types::Backend::Dx12 => $($c)*.$method::<wgpu_core::api::Dx12> $params,
-        #[cfg(any(
-            all(unix, not(target_os = "macos"), not(target_os = "ios")),
-            feature = "angle",
-            target_arch = "wasm32"
-        ))]
-        wgpu_types::Backend::Gl => $($c)*.$method::<wgpu_core::api::Gles> $params,
-        other => panic!("Unexpected backend {:?}", other),
-      }
-    };
-  }
-
     macro_rules! gfx_put {
-    ($id:expr => $global:ident.$method:ident( $($param:expr),* ) => $state:expr, $rc:expr) => {{
-      let (val, maybe_err) = gfx_select!($id => $global.$method($($param),*));
+    ($global:ident.$method:ident( $($param:expr),* ) => $state:expr, $rc:expr) => {{
+      let (val, maybe_err) = $global.$method($($param),*);
       let rid = $state.resource_table.add($rc($global.clone(), val));
       Ok(WebGpuResult::rid_err(rid, maybe_err))
     }};
   }
 
     macro_rules! gfx_ok {
-    ($id:expr => $global:ident.$method:ident( $($param:expr),* )) => {{
-      let maybe_err = gfx_select!($id => $global.$method($($param),*)).err();
+    ($global:ident.$method:ident( $($param:expr),* )) => {{
+      let maybe_err = $global.$method($($param),*).err();
       Ok(WebGpuResult::maybe_err(maybe_err))
     }};
   }
@@ -71,6 +42,7 @@ mod macros {
 pub mod binding;
 pub mod buffer;
 pub mod bundle;
+pub mod byow;
 pub mod command_encoder;
 pub mod compute_pass;
 pub mod error;
@@ -79,22 +51,8 @@ pub mod queue;
 pub mod render_pass;
 pub mod sampler;
 pub mod shader;
-#[cfg(feature = "surface")]
 pub mod surface;
 pub mod texture;
-
-pub struct Unstable(pub bool);
-
-fn check_unstable(state: &OpState, api_name: &str) {
-    let unstable = state.borrow::<Unstable>();
-    if !unstable.0 {
-        eprintln!(
-            "Unstable API '{}'. The --unstable flag must be provided.",
-            api_name
-        );
-        std::process::exit(70);
-    }
-}
 
 pub type Instance = std::sync::Arc<wgpu_core::global::Global>;
 
@@ -105,7 +63,7 @@ impl Resource for WebGpuAdapter {
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.adapter_drop(self.1));
+        self.0.adapter_drop(self.1);
     }
 }
 
@@ -116,7 +74,7 @@ impl Resource for WebGpuDevice {
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.device_drop(self.1));
+        self.0.device_drop(self.1);
     }
 }
 
@@ -127,7 +85,7 @@ impl Resource for WebGpuQuerySet {
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.query_set_drop(self.1));
+        self.0.query_set_drop(self.1);
     }
 }
 
@@ -224,12 +182,15 @@ deno_core::extension!(
         queue::op_webgpu_write_texture,
         // shader
         shader::op_webgpu_create_shader_module,
+        // surface
+        surface::op_webgpu_surface_configure,
+        surface::op_webgpu_surface_get_current_texture,
+        surface::op_webgpu_surface_present,
+        // byow
+        byow::op_webgpu_surface_create,
     ],
-    esm = ["01_webgpu.js"],
-    options = { unstable: bool },
-    state = |state, options| {
-        state.put(Unstable(options.unstable));
-    },
+    esm = ["00_init.js", "02_surface.js"],
+    lazy_loaded_esm = ["01_webgpu.js"],
 );
 
 fn deserialize_features(features: &wgpu_types::Features) -> Vec<&'static str> {
@@ -255,6 +216,9 @@ fn deserialize_features(features: &wgpu_types::Features) -> Vec<&'static str> {
     }
     if features.contains(wgpu_types::Features::TEXTURE_COMPRESSION_BC) {
         return_features.push("texture-compression-bc");
+    }
+    if features.contains(wgpu_types::Features::TEXTURE_COMPRESSION_BC_SLICED_3D) {
+        return_features.push("texture-compression-bc-sliced-3d");
     }
     if features.contains(wgpu_types::Features::TEXTURE_COMPRESSION_ETC2) {
         return_features.push("texture-compression-etc2");
@@ -368,38 +332,51 @@ fn deserialize_features(features: &wgpu_types::Features) -> Vec<&'static str> {
     if features.contains(wgpu_types::Features::SHADER_EARLY_DEPTH_TEST) {
         return_features.push("shader-early-depth-test");
     }
-    if features.contains(wgpu_types::Features::SHADER_UNUSED_VERTEX_OUTPUT) {
-        return_features.push("shader-unused-vertex-output");
-    }
 
     return_features
 }
 
 #[derive(Serialize)]
 #[serde(untagged)]
-pub enum GpuAdapterDeviceOrErr {
+pub enum GpuAdapterResOrErr {
     Error { err: String },
-    Features(GpuAdapterDevice),
+    Features(GpuAdapterRes),
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GpuAdapterDevice {
+pub struct GpuAdapterRes {
     rid: ResourceId,
     limits: wgpu_types::Limits,
     features: Vec<&'static str>,
     is_software: bool,
 }
 
-#[op2(async)]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuDeviceRes {
+    rid: ResourceId,
+    queue_rid: ResourceId,
+    limits: wgpu_types::Limits,
+    features: Vec<&'static str>,
+    is_software: bool,
+}
+
+#[op2]
 #[serde]
-pub async fn op_webgpu_request_adapter(
+pub fn op_webgpu_request_adapter(
     state: Rc<RefCell<OpState>>,
     #[serde] power_preference: Option<wgpu_types::PowerPreference>,
     force_fallback_adapter: bool,
-) -> Result<GpuAdapterDeviceOrErr, AnyError> {
+) -> Result<GpuAdapterResOrErr, AnyError> {
     let mut state = state.borrow_mut();
-    check_unstable(&state, "navigator.gpu.requestAdapter");
+
+    // TODO(bartlomieju): replace with `state.feature_checker.check_or_exit`
+    // once we phase out `check_or_exit_with_legacy_fallback`
+    state
+        .feature_checker
+        .check_or_exit_with_legacy_fallback(UNSTABLE_FEATURE_NAME, "navigator.gpu.requestAdapter");
+
     let backends = std::env::var("DENO_WEBGPU_BACKEND").map_or_else(
         |_| wgpu_types::Backends::all(),
         |s| wgpu_core::instance::parse_backends_from_comma_list(&s),
@@ -432,20 +409,20 @@ pub async fn op_webgpu_request_adapter(
     let adapter = match res {
         Ok(adapter) => adapter,
         Err(err) => {
-            return Ok(GpuAdapterDeviceOrErr::Error {
+            return Ok(GpuAdapterResOrErr::Error {
                 err: err.to_string(),
             })
         }
     };
-    let adapter_features = gfx_select!(adapter => instance.adapter_features(adapter))?;
+    let adapter_features = instance.adapter_features(adapter)?;
     let features = deserialize_features(&adapter_features);
-    let adapter_limits = gfx_select!(adapter => instance.adapter_limits(adapter))?;
+    let adapter_limits = instance.adapter_limits(adapter)?;
 
     let instance = instance.clone();
 
     let rid = state.resource_table.add(WebGpuAdapter(instance, adapter));
 
-    Ok(GpuAdapterDeviceOrErr::Features(GpuAdapterDevice {
+    Ok(GpuAdapterResOrErr::Features(GpuAdapterRes {
         rid,
         features,
         limits: adapter_limits,
@@ -485,6 +462,12 @@ impl From<GpuRequiredFeatures> for wgpu_types::Features {
         features.set(
             wgpu_types::Features::TEXTURE_COMPRESSION_BC,
             required_features.0.contains("texture-compression-bc"),
+        );
+        features.set(
+            wgpu_types::Features::TEXTURE_COMPRESSION_BC_SLICED_3D,
+            required_features
+                .0
+                .contains("texture-compression-bc-sliced-3d"),
         );
         features.set(
             wgpu_types::Features::TEXTURE_COMPRESSION_ETC2,
@@ -640,26 +623,22 @@ impl From<GpuRequiredFeatures> for wgpu_types::Features {
             wgpu_types::Features::SHADER_EARLY_DEPTH_TEST,
             required_features.0.contains("shader-early-depth-test"),
         );
-        features.set(
-            wgpu_types::Features::SHADER_UNUSED_VERTEX_OUTPUT,
-            required_features.0.contains("shader-unused-vertex-output"),
-        );
 
         features
     }
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-pub async fn op_webgpu_request_device(
+pub fn op_webgpu_request_device(
     state: Rc<RefCell<OpState>>,
     #[smi] adapter_rid: ResourceId,
     #[string] label: String,
     #[serde] required_features: GpuRequiredFeatures,
     #[serde] required_limits: Option<wgpu_types::Limits>,
-) -> Result<GpuAdapterDevice, AnyError> {
+) -> Result<GpuDeviceRes, AnyError> {
     let mut state = state.borrow_mut();
-    let adapter_resource = state.resource_table.get::<WebGpuAdapter>(adapter_rid)?;
+    let adapter_resource = state.resource_table.take::<WebGpuAdapter>(adapter_rid)?;
     let adapter = adapter_resource.1;
     let instance = state.borrow::<Instance>();
 
@@ -667,28 +646,38 @@ pub async fn op_webgpu_request_device(
         label: Some(Cow::Owned(label)),
         required_features: required_features.into(),
         required_limits: required_limits.unwrap_or_default(),
+        memory_hints: wgpu_types::MemoryHints::default(),
     };
 
-    let (device, _queue, maybe_err) = gfx_select!(adapter => instance.adapter_request_device(
-      adapter,
-      &descriptor,
-      std::env::var("DENO_WEBGPU_TRACE").ok().as_ref().map(std::path::Path::new),
-      None,
-      None
-    ));
+    let (device, queue, maybe_err) = instance.adapter_request_device(
+        adapter,
+        &descriptor,
+        std::env::var("DENO_WEBGPU_TRACE")
+            .ok()
+            .as_ref()
+            .map(std::path::Path::new),
+        None,
+        None,
+    );
+    adapter_resource.close();
     if let Some(err) = maybe_err {
         return Err(DomExceptionOperationError::new(&err.to_string()).into());
     }
 
-    let device_features = gfx_select!(device => instance.device_features(device))?;
+    let device_features = instance.device_features(device)?;
     let features = deserialize_features(&device_features);
-    let limits = gfx_select!(device => instance.device_limits(device))?;
+    let limits = instance.device_limits(device)?;
 
     let instance = instance.clone();
+    let instance2 = instance.clone();
     let rid = state.resource_table.add(WebGpuDevice(instance, device));
+    let queue_rid = state
+        .resource_table
+        .add(queue::WebGpuQueue(instance2, queue));
 
-    Ok(GpuAdapterDevice {
+    Ok(GpuDeviceRes {
         rid,
+        queue_rid,
         features,
         limits,
         // TODO(lucacasonato): report correctly from wgpu
@@ -705,18 +694,19 @@ pub struct GPUAdapterInfo {
     description: String,
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-pub async fn op_webgpu_request_adapter_info(
+pub fn op_webgpu_request_adapter_info(
     state: Rc<RefCell<OpState>>,
     #[smi] adapter_rid: ResourceId,
 ) -> Result<GPUAdapterInfo, AnyError> {
-    let state = state.borrow_mut();
-    let adapter_resource = state.resource_table.get::<WebGpuAdapter>(adapter_rid)?;
+    let mut state = state.borrow_mut();
+    let adapter_resource = state.resource_table.take::<WebGpuAdapter>(adapter_rid)?;
     let adapter = adapter_resource.1;
     let instance = state.borrow::<Instance>();
 
-    let info = gfx_select!(adapter => instance.adapter_get_info(adapter))?;
+    let info = instance.adapter_get_info(adapter)?;
+    adapter_resource.close();
 
     Ok(GPUAdapterInfo {
         vendor: info.vendor.to_string(),
@@ -768,7 +758,7 @@ pub fn op_webgpu_create_query_set(
         count: args.count,
     };
 
-    gfx_put!(device => instance.device_create_query_set(
+    gfx_put!(instance.device_create_query_set(
     device,
     &descriptor,
     None

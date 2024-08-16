@@ -44,7 +44,7 @@ pub fn map_texture_format_failable(format: wgt::TextureFormat) -> Option<dxgifor
         Tf::Rgb9e5Ufloat => DXGI_FORMAT_R9G9B9E5_SHAREDEXP,
         Tf::Rgb10a2Uint => DXGI_FORMAT_R10G10B10A2_UINT,
         Tf::Rgb10a2Unorm => DXGI_FORMAT_R10G10B10A2_UNORM,
-        Tf::Rg11b10Float => DXGI_FORMAT_R11G11B10_FLOAT,
+        Tf::Rg11b10UFloat => DXGI_FORMAT_R11G11B10_FLOAT,
         Tf::Rg32Uint => DXGI_FORMAT_R32G32_UINT,
         Tf::Rg32Sint => DXGI_FORMAT_R32G32_SINT,
         Tf::Rg32Float => DXGI_FORMAT_R32G32_FLOAT,
@@ -261,6 +261,7 @@ pub fn map_vertex_format(format: wgt::VertexFormat) -> dxgiformat::DXGI_FORMAT {
         Vf::Uint32x4 => DXGI_FORMAT_R32G32B32A32_UINT,
         Vf::Sint32x4 => DXGI_FORMAT_R32G32B32A32_SINT,
         Vf::Float32x4 => DXGI_FORMAT_R32G32B32A32_FLOAT,
+        Vf::Unorm10_10_10_2 => DXGI_FORMAT_R10G10B10A2_UNORM,
         Vf::Float64 | Vf::Float64x2 | Vf::Float64x3 | Vf::Float64x4 => unimplemented!(),
     }
 }

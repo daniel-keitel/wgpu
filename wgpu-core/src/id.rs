@@ -11,7 +11,7 @@ type IdType = u64;
 type ZippedIndex = Index;
 type NonZeroId = std::num::NonZeroU64;
 
-const INDEX_BITS: usize = std::mem::size_of::<ZippedIndex>() * 8;
+const INDEX_BITS: usize = ZippedIndex::BITS as usize;
 const EPOCH_BITS: usize = INDEX_BITS - BACKEND_BITS;
 const BACKEND_BITS: usize = 3;
 const BACKEND_SHIFT: usize = INDEX_BITS * 2 - BACKEND_BITS;
@@ -77,22 +77,9 @@ impl RawId {
     }
 }
 
-/// Coerce a slice of identifiers into a slice of optional raw identifiers.
-///
-/// There's two reasons why we know this is correct:
-/// * `Option<T>` is guaranteed to be niche-filled to 0's.
-/// * The `T` in `Option<T>` can inhabit any representation except 0's, since
-///   its underlying representation is `NonZero*`.
-pub fn as_option_slice<T: Marker>(ids: &[Id<T>]) -> &[Option<Id<T>>] {
-    // SAFETY: Any Id<T> is repr(transparent) over `Option<RawId>`, since both
-    // are backed by non-zero types.
-    unsafe { std::slice::from_raw_parts(ids.as_ptr().cast(), ids.len()) }
-}
-
 /// An identifier for a wgpu object.
 ///
-/// An `Id<T>` value identifies a value stored in a [`Global`]'s [`Hub`]'s [`Storage`].
-/// `Storage` implements [`Index`] and [`IndexMut`], accepting `Id` values as indices.
+/// An `Id<T>` value identifies a value stored in a [`Global`]'s [`Hub`].
 ///
 /// ## Note on `Id` typing
 ///
@@ -112,10 +99,7 @@ pub fn as_option_slice<T: Marker>(ids: &[Id<T>]) -> &[Option<Id<T>>] {
 /// [`Global`]: crate::global::Global
 /// [`Hub`]: crate::hub::Hub
 /// [`Hub<A>`]: crate::hub::Hub
-/// [`Storage`]: crate::storage::Storage
 /// [`Texture<A>`]: crate::resource::Texture
-/// [`Index`]: std::ops::Index
-/// [`IndexMut`]: std::ops::IndexMut
 /// [`Registry`]: crate::hub::Registry
 /// [`Empty`]: hal::api::Empty
 #[repr(transparent)]
@@ -182,15 +166,6 @@ where
         self.0.backend()
     }
 
-    /// Transmute this identifier to one with a different marker trait.
-    ///
-    /// Legal use is governed through a sealed trait, however it's correctness
-    /// depends on the current implementation of `wgpu-core`.
-    #[inline]
-    pub const fn transmute<U: self::transmute::Transmute<T>>(self) -> Id<U> {
-        Id(self.0, PhantomData)
-    }
-
     #[inline]
     pub fn zip(index: Index, epoch: Epoch, backend: Backend) -> Self {
         Id(RawId::zip(index, epoch, backend), PhantomData)
@@ -200,20 +175,6 @@ where
     pub fn unzip(self) -> (Index, Epoch, Backend) {
         self.0.unzip()
     }
-}
-
-pub(crate) mod transmute {
-    // This trait is effectively sealed to prevent illegal transmutes.
-    pub trait Transmute<U>: super::Marker {}
-
-    // Self-transmute is always legal.
-    impl<T> Transmute<T> for T where T: super::Marker {}
-
-    // TODO: Remove these once queues have their own identifiers.
-    impl Transmute<super::markers::Queue> for super::markers::Device {}
-    impl Transmute<super::markers::Device> for super::markers::Queue {}
-    impl Transmute<super::markers::CommandBuffer> for super::markers::CommandEncoder {}
-    impl Transmute<super::markers::CommandEncoder> for super::markers::CommandBuffer {}
 }
 
 impl<T> Copy for Id<T> where T: Marker {}
@@ -275,7 +236,7 @@ where
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
     }
 }
 
@@ -340,6 +301,7 @@ ids! {
     pub type ShaderModuleId ShaderModule;
     pub type RenderPipelineId RenderPipeline;
     pub type ComputePipelineId ComputePipeline;
+    pub type PipelineCacheId PipelineCache;
     pub type CommandEncoderId CommandEncoder;
     pub type CommandBufferId CommandBuffer;
     pub type RenderPassEncoderId RenderPassEncoder;
@@ -351,6 +313,21 @@ ids! {
     pub type TlasId Tlas;
 }
 
+// The CommandBuffer type serves both as encoder and
+// buffer, which is why the 2 functions below exist.
+
+impl CommandEncoderId {
+    pub fn into_command_buffer_id(self) -> CommandBufferId {
+        Id(self.0, PhantomData)
+    }
+}
+
+impl CommandBufferId {
+    pub fn into_command_encoder_id(self) -> CommandEncoderId {
+        Id(self.0, PhantomData)
+    }
+}
+
 #[test]
 fn test_id_backend() {
     for &b in &[
@@ -360,7 +337,7 @@ fn test_id_backend() {
         Backend::Dx12,
         Backend::Gl,
     ] {
-        let id = crate::id::Id::<()>::zip(1, 0, b);
+        let id = Id::<()>::zip(1, 0, b);
         let (_id, _epoch, backend) = id.unzip();
         assert_eq!(id.backend(), b);
         assert_eq!(backend, b);
@@ -382,7 +359,7 @@ fn test_id() {
     for &i in &indexes {
         for &e in &epochs {
             for &b in &backends {
-                let id = crate::id::Id::<()>::zip(i, e, b);
+                let id = Id::<()>::zip(i, e, b);
                 let (index, epoch, backend) = id.unzip();
                 assert_eq!(index, i);
                 assert_eq!(epoch, e);

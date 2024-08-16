@@ -26,7 +26,7 @@ static TEXTURE_FORMATS_UNCOMPRESSED_GLES_COMPAT: &[wgpu::TextureFormat] = &[
     wgpu::TextureFormat::Bgra8UnormSrgb,
     wgpu::TextureFormat::Rgb10a2Uint,
     wgpu::TextureFormat::Rgb10a2Unorm,
-    wgpu::TextureFormat::Rg11b10Float,
+    wgpu::TextureFormat::Rg11b10UFloat,
     wgpu::TextureFormat::Rg32Uint,
     wgpu::TextureFormat::Rg32Sint,
     wgpu::TextureFormat::Rg32Float,
@@ -273,7 +273,7 @@ async fn clear_texture_tests(ctx: TestingContext, formats: &'static [wgpu::Textu
         let is_compressed_or_depth_stencil_format =
             format.is_compressed() || format.is_depth_stencil_format();
         let supports_1d = !is_compressed_or_depth_stencil_format;
-        let supports_3d = !is_compressed_or_depth_stencil_format;
+        let supports_3d = format.is_bcn() || !is_compressed_or_depth_stencil_format;
 
         // 1D texture
         if supports_1d {
@@ -375,6 +375,7 @@ static CLEAR_TEXTURE_DEPTH32_STENCIL8: GpuTestConfiguration = GpuTestConfigurati
     .parameters(
         TestParameters::default()
             .features(wgpu::Features::CLEAR_TEXTURE | wgpu::Features::DEPTH32FLOAT_STENCIL8)
+            .downlevel_flags(wgpu::DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES)
             // https://github.com/gfx-rs/wgpu/issues/5016
             .skip(FailureCase::adapter("Apple Paravirtual device")),
     )
@@ -384,7 +385,15 @@ static CLEAR_TEXTURE_DEPTH32_STENCIL8: GpuTestConfiguration = GpuTestConfigurati
 static CLEAR_TEXTURE_COMPRESSED_BCN: GpuTestConfiguration = GpuTestConfiguration::new()
     .parameters(
         TestParameters::default()
-            .features(wgpu::Features::CLEAR_TEXTURE | wgpu::Features::TEXTURE_COMPRESSION_BC)
+            .features(
+                wgpu::Features::CLEAR_TEXTURE
+                    | wgpu::Features::TEXTURE_COMPRESSION_BC
+                    | wgpu::Features::TEXTURE_COMPRESSION_BC_SLICED_3D,
+            )
+            .limits(wgpu::Limits {
+                max_texture_dimension_3d: 1024,
+                ..wgpu::Limits::downlevel_defaults()
+            })
             // https://bugs.chromium.org/p/angleproject/issues/detail?id=7056
             .expect_fail(FailureCase::backend_adapter(wgpu::Backends::GL, "ANGLE"))
             // compressed texture copy to buffer not yet implemented
